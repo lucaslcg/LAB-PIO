@@ -163,14 +163,16 @@ def run_benchmark():
             frame_rgb = picam2.capture_array()
             if frame_rgb is None: continue
 
-            # Converte de RGB para BGR com NumPy (custo quase zero)
-            frame = frame_rgb[:, :, ::-1]
+            # Converte de RGB para BGR usando a função robusta do OpenCV
+            frame = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
             if not test_started:
                 # Mostra uma tela de espera até o usuário pressionar 's'
                 startup_text = "Pressione 's' para iniciar..."
-                cv2.putText(frame, startup_text, (50, FRAME_HEIGHT // 2), FONT, 1.5, (0, 255, 255), 4)
-                cv2.imshow(f"Benchmark - {method_name}", frame)
+                # Garante que o frame seja contíguo na memória antes de desenhar
+                frame_contiguous = np.ascontiguousarray(frame)
+                cv2.putText(frame_contiguous, startup_text, (50, FRAME_HEIGHT // 2), FONT, 1.5, (0, 255, 255), 4)
+                cv2.imshow(f"Benchmark - {method_name}", frame_contiguous)
                 if cv2.waitKey(1) & 0xFF == ord('s'):
                     test_started = True
                 continue
