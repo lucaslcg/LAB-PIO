@@ -8,17 +8,17 @@ from picamera2 import Picamera2
 # --- 1. CONFIGURAÇÕES PRINCIPAIS ---
 
 # Configurações do Benchmark
-TOTAL_FRAMES_PER_TEST = 300  # Número de quadros para analisar por método
+TOTAL_FRAMES_PER_TEST = 300
+DOMINANT_CHANNEL_THRESHOLD = 50  # Quão mais "forte" um canal de cor deve ser que os outros
 
 # Dimensões da Captura
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 
-# Fonte para o texto no HUD
+# Fonte e Cores
 FONT = cv2.FONT_HERSHEY_SIMPLEX
-
-# Limite mínimo de área do contorno para evitar ruído
 MIN_AREA = 1000
+SIGHT_COLORS = {'preto': (100, 100, 100), 'verde': (0, 255, 0), 'vermelho': (0, 0, 255)}
 
 # --- 2. CALIBRAÇÃO DE COR (FIXA PARA O BENCHMARK) ---
 
@@ -29,22 +29,9 @@ HSV_RANGES = {
     'vermelho2': ([170, 100, 100], [180, 255, 255])
 }
 
-BGR_RANGES = {
-    'preto': ([0, 70], [0, 70], [0, 70]),
-    'verde': ([0, 100], [120, 255], [0, 100]),
-    'vermelho': ([0, 100], [0, 100], [120, 255])
-}
-
-SIGHT_COLORS = {
-    'preto': (100, 100, 100),
-    'verde': (0, 255, 0),
-    'vermelho': (0, 0, 255)
-}
-
-# --- 3. FUNÇÕES DE PROCESSAMENTO E AUXILIARES ---
+# --- 3. FUNÇÕES AUXILIARES ---
 
 def find_and_draw_sights(frame, mask, name, color):
-    """ Encontra o maior contorno na máscara, desenha a mira e retorna se o alvo foi encontrado """
     detected = False
     try:
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -55,83 +42,43 @@ def find_and_draw_sights(frame, mask, name, color):
                 cv2.rectangle(frame, (x, y), (x + w, y + h), color, 3)
                 cv2.putText(frame, name, (x, y - 10), FONT, 0.8, color, 2)
                 detected = True
-    except:
-        pass
+    except: pass
     return frame, detected
 
 def draw_hud(frame, method_name, frame_count, proc_time_ms):
-    """ Desenha um HUD simplificado para o benchmark """
     cv2.putText(frame, f"Metodo: {method_name}", (20, 40), FONT, 1.2, (255, 255, 0), 3)
     cv2.putText(frame, f"Frame: {frame_count} / {TOTAL_FRAMES_PER_TEST}", (20, 80), FONT, 1.2, (255, 255, 0), 3)
     cv2.putText(frame, f"Latencia: {proc_time_ms:.2f} ms", (20, 120), FONT, 1.2, (255, 255, 0), 3)
     return frame
 
 def print_benchmark_report(method_name, metrics):
-    """ Imprime o relatório de performance para um método """
     total_frames = len(metrics['timings'])
     if total_frames == 0:
-        print(f"\n--- Relatorio de Benchmark para {method_name} ---")
-        print("Nenhum quadro foi processado.")
+        print(f"\n--- Relatorio de Benchmark para {method_name} ---\nNenhum quadro foi processado.")
         return
 
-    # --- Análise de Detecção ---
-    color_detections = {color: 0 for color in SIGHT_COLORS}
-    for detection_dict in metrics['detections']:
-        for color, found in detection_dict.items():
-            if found:
-                color_detections[color] += 1
+    color_detections = {color: sum(d[color] for d in metrics['detections']) for color in SIGHT_COLORS}
     color_rates = {color: (count / total_frames) * 100 for color, count in color_detections.items()}
     overall_detections = sum(1 for d in metrics['detections'] if any(d.values()))
     overall_detection_rate = (overall_detections / total_frames) * 100
 
-    # --- Análise de Latência ---
-    avg_latency = np.mean(metrics['timings'])
-    std_dev_latency = np.std(metrics['timings'])
-    worst_latency = max(metrics['timings'])
-    best_latency = min(metrics['timings'])
+    avg_latency, std_dev_latency = np.mean(metrics['timings']), np.std(metrics['timings'])
+    real_throughput = total_frames / metrics['total_time'] if metrics['total_time'] > 0 else 0
+    avg_cpu, max_cpu = np.mean(metrics['cpu_usage']), max(metrics['cpu_usage'])
+    avg_mem, max_mem = np.mean(metrics['mem_usage']), max(metrics['mem_usage'])
 
-    # --- Análise de Throughput ---
-    total_time_seconds = metrics['total_time']
-    real_throughput = total_frames / total_time_seconds if total_time_seconds > 0 else 0
-
-    # --- Análise de Recursos ---
-    avg_cpu = np.mean(metrics['cpu_usage'])
-    max_cpu = max(metrics['cpu_usage'])
-    avg_mem = np.mean(metrics['mem_usage'])
-    max_mem = max(metrics['mem_usage'])
-
-    print("\n--- Relatorio de Benchmark ---")
-    print(f"Metodo: {method_name}")
-    print("=" * 40)
-
-    print("\n[ Analise de Throughput ]")
-    print(f"  - Quadros Processados: {total_frames}")
-    print(f"  - Tempo Total do Teste: {total_time_seconds:.2f} segundos")
-    print(f"  - Throughput Real: {real_throughput:.2f} FPS")
-
-    print("\n[ Analise de Latencia (Custo por Quadro) ]")
-    print(f"  - Media: {avg_latency:.2f} ms")
-    print(f"  - Desvio Padrao: {std_dev_latency:.2f} ms (Consistencia)")
-    print(f"  - Pior (Max): {worst_latency:.2f} ms")
-    print(f"  - Melhor (Min): {best_latency:.2f} ms")
-
-    print("\n[ Analise de Uso de Recursos ]")
-    print(f"  - Uso Medio de CPU: {avg_cpu:.2f}%")
-    print(f"  - Pico de Uso de CPU: {max_cpu:.2f}%")
-    print(f"  - Uso Medio de Memoria: {avg_mem:.2f} MB")
-    print(f"  - Pico de Uso de Memoria: {max_mem:.2f} MB")
-
-    print("\n[ Analise de Deteccao ]")
-    print(f"  - Taxa Geral de Deteccao: {overall_detection_rate:.2f}%")
+    print(f"\n--- Relatorio de Benchmark ---\nMetodo: {method_name}\n" + "="*40)
+    print(f"\n[ Analise de Throughput ]\n  - Quadros Processados: {total_frames}\n  - Tempo Total: {metrics['total_time']:.2f}s\n  - Throughput Real: {real_throughput:.2f} FPS")
+    print(f"\n[ Analise de Latencia (Custo por Quadro) ]\n  - Media: {avg_latency:.2f} ms\n  - Desvio Padrao: {std_dev_latency:.2f} ms\n  - Pior: {max(metrics['timings']):.2f} ms\n  - Melhor: {min(metrics['timings']):.2f} ms")
+    print(f"\n[ Analise de Uso de Recursos ]\n  - CPU Media: {avg_cpu:.2f}%\n  - CPU Pico: {max_cpu:.2f}%\n  - Memoria Media: {avg_mem:.2f} MB\n  - Memoria Pico: {max_mem:.2f} MB")
+    print(f"\n[ Analise de Deteccao ]\n  - Taxa Geral: {overall_detection_rate:.2f}%")
     for color, rate in color_rates.items():
         print(f"    - {color.capitalize()}: {rate:.2f}%")
+    print("="*40)
 
-    print("=" * 40)
-
-# --- 4. FUNÇÕES DE PROCESSAMENTO (OS DOIS MÉTODOS) ---
+# --- 4. FUNÇÕES DE PROCESSAMENTO ---
 
 def process_hsv(frame):
-    """ Método 1: Tradicional com BGR2HSV """
     t_start = cv2.getTickCount()
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     masks = {
@@ -147,25 +94,33 @@ def process_hsv(frame):
     proc_time = ((cv2.getTickCount() - t_start) / cv2.getTickFrequency()) * 1000
     return frame, proc_time, detections
 
-def process_bgr_split(frame):
-    """ Método 2: Manipulação de canais BGR """
+def process_dominant_channel(frame):
     t_start = cv2.getTickCount()
-    b, g, r = cv2.split(frame)
-    masks = {
-        'preto': cv2.bitwise_and(cv2.inRange(b, BGR_RANGES['preto'][0][0], BGR_RANGES['preto'][0][1]), cv2.bitwise_and(cv2.inRange(g, BGR_RANGES['preto'][1][0], BGR_RANGES['preto'][1][1]), cv2.inRange(r, BGR_RANGES['preto'][2][0], BGR_RANGES['preto'][2][1]))),
-        'verde': cv2.bitwise_and(cv2.inRange(b, BGR_RANGES['verde'][0][0], BGR_RANGES['verde'][0][1]), cv2.bitwise_and(cv2.inRange(g, BGR_RANGES['verde'][1][0], BGR_RANGES['verde'][1][1]), cv2.inRange(r, BGR_RANGES['verde'][2][0], BGR_RANGES['verde'][2][1]))),
-        'vermelho': cv2.bitwise_and(cv2.inRange(b, BGR_RANGES['vermelho'][0][0], BGR_RANGES['vermelho'][0][1]), cv2.bitwise_and(cv2.inRange(g, BGR_RANGES['vermelho'][1][0], BGR_RANGES['vermelho'][1][1]), cv2.inRange(r, BGR_RANGES['vermelho'][2][0], BGR_RANGES['vermelho'][2][1])))
-    }
+    frame_int = frame.astype(np.int16)
+    b, g, r = frame_int[:,:,0], frame_int[:,:,1], frame_int[:,:,2]
+
+    vermelho_dominante = np.clip(r - np.maximum(g, b), 0, 255).astype(np.uint8)
+    verde_dominante = np.clip(g - np.maximum(r, b), 0, 255).astype(np.uint8)
+
+    _, mask_vermelho = cv2.threshold(vermelho_dominante, DOMINANT_CHANNEL_THRESHOLD, 255, cv2.THRESH_BINARY)
+    _, mask_verde = cv2.threshold(verde_dominante, DOMINANT_CHANNEL_THRESHOLD, 255, cv2.THRESH_BINARY)
+    mask_preto = cv2.inRange(frame, np.array([0,0,0]), np.array([70,70,70]))
+
+    masks = {'preto': mask_preto, 'verde': mask_verde, 'vermelho': mask_vermelho}
     detections = {}
     for color, mask in masks.items():
         frame, detected = find_and_draw_sights(frame, mask, color.upper(), SIGHT_COLORS[color])
         detections[color] = detected
+
     proc_time = ((cv2.getTickCount() - t_start) / cv2.getTickFrequency()) * 1000
     return frame, proc_time, detections
 
 # --- 5. FUNÇÃO PRINCIPAL DE BENCHMARK ---
 def run_benchmark():
-    methods = {"HSV (Tradicional)": process_hsv, "BGR-Split": process_bgr_split}
+    methods = {
+        "1-HSV (Robusto)": process_hsv,
+        "2-Canal Dominante (Otimizado)": process_dominant_channel
+    }
 
     print("Iniciando a câmera com Picamera2...")
     picam2 = Picamera2()
@@ -184,8 +139,8 @@ def run_benchmark():
         metrics = {'timings': [], 'detections': [], 'cpu_usage': [], 'mem_usage': []}
         frame_count = 0
         test_started = False
-
         start_time = None
+
         while frame_count < TOTAL_FRAMES_PER_TEST:
             frame_rgb = picam2.capture_array()
             if frame_rgb is None: continue
@@ -202,14 +157,11 @@ def run_benchmark():
                     start_time = time.time()
                 continue
 
-            # Coleta de métricas de sistema ANTES do processamento
             cpu = psutil.cpu_percent()
-            mem = process.memory_info().rss / (1024 * 1024) # Converte para MB
+            mem = process.memory_info().rss / (1024 * 1024)
 
-            # Executa o processamento
             processed_frame, proc_time, detected_dict = process_function(frame.copy())
 
-            # Coleta os dados da iteração
             metrics['timings'].append(proc_time)
             metrics['detections'].append(detected_dict)
             metrics['cpu_usage'].append(cpu)
@@ -230,7 +182,7 @@ def run_benchmark():
         cv2.destroyAllWindows()
 
         if method_name != list(methods.keys())[-1]:
-            print("\nPressione qualquer tecla no terminal para iniciar o proximo teste...")
+            print("\nPressione Enter no terminal para iniciar o proximo teste...")
             input()
 
     print("\nBenchmark concluido.")
