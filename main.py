@@ -10,6 +10,7 @@ from picamera2 import Picamera2
 # Configurações do Benchmark
 TOTAL_FRAMES_PER_TEST = 300
 DOMINANT_CHANNEL_THRESHOLD = 50  # Quão mais "forte" um canal de cor deve ser que os outros
+PURE_CHANNEL_THRESHOLD = 180     # Valor mínimo (0-255) para considerar um canal como "puro"
 
 # Dimensões da Captura
 FRAME_WIDTH = 1280
@@ -115,11 +116,31 @@ def process_dominant_channel(frame):
     proc_time = ((cv2.getTickCount() - t_start) / cv2.getTickFrequency()) * 1000
     return frame, proc_time, detections
 
+def process_pure_channel(frame):
+    t_start = cv2.getTickCount()
+
+    # Acessar canais via slicing de NumPy é muito mais rápido que cv2.split()
+    # frame[:,:,2] -> Canal Vermelho (R)
+    # frame[:,:,1] -> Canal Verde (G)
+    _, mask_vermelho = cv2.threshold(frame[:,:,2], PURE_CHANNEL_THRESHOLD, 255, cv2.THRESH_BINARY)
+    _, mask_verde = cv2.threshold(frame[:,:,1], PURE_CHANNEL_THRESHOLD, 255, cv2.THRESH_BINARY)
+    mask_preto = cv2.inRange(frame, np.array([0,0,0]), np.array([70,70,70]))
+
+    masks = {'preto': mask_preto, 'verde': mask_verde, 'vermelho': mask_vermelho}
+    detections = {}
+    for color, mask in masks.items():
+        frame, detected = find_and_draw_sights(frame, mask, color.upper(), SIGHT_COLORS[color])
+        detections[color] = detected
+
+    proc_time = ((cv2.getTickCount() - t_start) / cv2.getTickFrequency()) * 1000
+    return frame, proc_time, detections
+
 # --- 5. FUNÇÃO PRINCIPAL DE BENCHMARK ---
 def run_benchmark():
     methods = {
         "1-HSV (Robusto)": process_hsv,
-        "2-Canal Dominante (Otimizado)": process_dominant_channel
+        "2-Canal Dominante (Otimizado)": process_dominant_channel,
+        "3-Canal Puro (Sua Sugestao)": process_pure_channel
     }
 
     print("Iniciando a câmera com Picamera2...")
